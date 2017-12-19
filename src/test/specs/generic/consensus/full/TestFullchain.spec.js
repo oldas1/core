@@ -35,13 +35,13 @@ class TestBlockchain extends FullChain {
      * @param {Address} recipientAddr
      * @param {number} amount
      * @param {number} fee
-     * @param {number} nonce
+     * @param {number} validityStartHeight
      * @param {PrivateKey} [senderPrivKey]
      * @param {Signature} [signature]
      * @return {Promise.<BasicTransaction>}
      */
-    static async createTransaction(senderPubKey, recipientAddr, amount = 1, fee = 1, nonce = 0, senderPrivKey = undefined, signature = undefined) {
-        const transaction = new BasicTransaction(senderPubKey, recipientAddr, amount, fee, nonce);
+    static async createTransaction(senderPubKey, recipientAddr, amount = 1, fee = 1, validityStartHeight = 0, senderPrivKey = undefined, signature = undefined) {
+        const transaction = new BasicTransaction(senderPubKey, recipientAddr, amount, fee, validityStartHeight);
 
         // allow to hardcode a signature
         if (!signature) {
@@ -61,14 +61,14 @@ class TestBlockchain extends FullChain {
      * @param {Address} recipientAddr
      * @param {number} amount
      * @param {number} fee
-     * @param {number} nonce
+     * @param {number} validityStartHeight
      * @param {PrivateKey} [senderPrivKey]
      * @param {Signature} [signature]
      * @return {Promise.<LegacyTransaction>}
      * @deprecated
      */
-    static async createLegacyTransaction(senderPubKey, recipientAddr, amount = 1, fee = 1, nonce = 0, senderPrivKey = undefined, signature = undefined) {
-        const transaction = new LegacyTransaction(senderPubKey, recipientAddr, amount, fee, nonce);
+    static async createLegacyTransaction(senderPubKey, recipientAddr, amount = 1, fee = 1, validityStartHeight = 0, senderPrivKey = undefined, signature = undefined) {
+        const transaction = new BasicTransaction(senderPubKey, recipientAddr, amount, fee, validityStartHeight);
 
         // allow to hardcode a signature
         if (!signature) {
@@ -104,7 +104,6 @@ class TestBlockchain extends FullChain {
          At the same time, there must not be more than one transaction from the same sender.
          */
         const transactions = [];
-        const nonces = [];
         for (let j = 0; j < numTransactions; j++) {
             const sender = this.users[j % numUsers];
             const recipient = this.users[(j + 1) % numUsers];
@@ -113,17 +112,13 @@ class TestBlockchain extends FullChain {
             const account = await this.accounts.get(sender.address, Account.Type.BASIC);
             const amount = Math.floor(account.balance / 10) || 1;
             const fee = Math.floor(amount / 2);
-            const nonce = account.nonce + (nonces[j % numUsers] ? nonces[j % numUsers] : 0);
 
-            const transaction = await TestBlockchain.createTransaction(sender.publicKey, recipient.address, amount, fee, nonce, sender.privateKey);// eslint-disable-line no-await-in-loop
-
-            // Increment nonce for this user
-            nonces[j % numUsers] = nonce + 1;
+            const transaction = await TestBlockchain.createTransaction(sender.publicKey, recipient.address, amount, fee, this.height, sender.privateKey);// eslint-disable-line no-await-in-loop
 
             transactions.push(transaction);
         }
 
-        return transactions.sort((a, b) => a.compareBlockOrder(b));
+        return transactions;
     }
 
     /**
@@ -153,7 +148,7 @@ class TestBlockchain extends FullChain {
         if (!accountsHash) {
             const accountsTx = await this._accounts.transaction();
             try {
-                await accountsTx.commitBlockBody(body, height);
+                await accountsTx.commitBlockBody(body, height, this._transactionsCache);
                 accountsHash = await accountsTx.hash();
             } catch (e) {
                 // The block is invalid, fill with broken accountsHash
@@ -284,17 +279,19 @@ class TestBlockchain extends FullChain {
         return share.nonce;
     }
 
-    static mineBlocks() {
+    static async mineBlocks() {
         const nonces = {};
-        const promises = [];
         for (const hash in TestBlockchain.BLOCKS) {
             if (TestBlockchain.NONCES[hash]) {
                 nonces[hash] = TestBlockchain.NONCES[hash];
             } else {
-                promises.push(TestBlockchain.mineBlock(TestBlockchain.BLOCKS[hash]).then(nonce => nonces[hash] = nonce));
+                await TestBlockchain.mineBlock(TestBlockchain.BLOCKS[hash]).then(nonce => {
+                    nonces[hash] = nonce;
+                    Log.i(`'${hash}': ${nonce}`);
+                });
             }
         }
-        return Promise.all(promises).then(() => nonces);
+        return nonces;
     }
 
     static async mineBlocksJSON() {
@@ -357,85 +354,90 @@ TestBlockchain.USERS = [ // ed25519 keypairs
     'g2/wZc1CCHBZAajOs0yHBiIj+YTBKf2kFqg4feCj6qNy5yilcUR752g6MC3pV0scZbEzqLzK1kZ5tnxOjbZYJw=='
 ];
 TestBlockchain.NONCES = {
-    '7cyIBzjnarUx43jauyq6VpKa8pW4+2GLT3myAOq5y3o=': 93094,
-    'ldXC8PJ2lNMa3AYUWLe3D+HynFiEKA3k7RjcleRZ8vc=': 8641,
-    'bJ5h4myf2WS1Us49O6lb+BOa8fdNwd/Tvz0r1w+fEAw=': 32714,
-    'mLa2XXyCdhB5N3h7sM+G90hhUQMXwC/qN9qHQbaDsy4=': 53226,
-    'kOBPT8C2/fvNNzh+u6gDS9D05knPO9fc5Tbq7q1sGps=': 33570,
-    'qWtfp+DIHIYveCtGwDTFJw8KLZDU8SEfQXLoPTrGsHY=': 12263,
-    'pnXUNKunv8pqZMeyEhFsWqAY0w84YUs257MfJmzzHF0=': 41055,
-    '9xMdUS+JtPCT83Ml4Um0lnE4ZV1p00Wmt/CCTOPE+rU=': 2629,
-    'R0kWRj8VtTM0Xt0MoqMXNSLOqnrRkRl9cQUmzIdTxg0=': 257225,
-    'DedB/l3f9Y9OL5wVL2+As2su9mJ7sPxz6rA23pdsru4=': 40730,
-    'SXqDrAesmoqLnj7kP+75iq3nFBAUu4Kdxy2DXFMI2rE=': 53910,
-    'cR3A7Paz2MX7V6i7pQbSuLLsYxMKHUIiRkehuD5ZPX4=': 186161,
-    'bMYPkWtf0ma/medPBL4GdMWdPizfEj88uVbPGolfGFA=': 47377,
-    'yPutNDSBY7b25E0vbHRU58OZow+9DgEJgzkwztLZNVg=': 5883,
-    'asMixxHEO4nI7FAPE89uYkyWO6mIcUwQMDZIdRWxVQE=': 76956,
-    'eNlmRKQTAuDj3pr4ZH8imGUmQa1UBpWnxlqz6JOlIR8=': 60100,
-    'zRDB7dzSf6RpuKIVC1yOPbRviOJHNFz1aJNSWCb/XGo=': 22732,
-    'j/kbjTwJvixQ6QFqkzjSYuYwxswIBKreBWdEF4jAy7g=': 2017,
-    'PaGDTMuhkr52k2d2aSBzGt8QTuJkzh3MnUtvS4sKhSA=': 22474,
-    '//OIXyr4H4BPGutMKVIxEenFgv+TneH6RcJo39I0LfU=': 103132,
-    'sU/CIi7LhAWG/iP2gmsebmZSM529nYXBR3GOMtKScfw=': 181778,
-    '3GyyvjzR7RUuxB2EMgD67RA1Ual9B+mTSXIH/wa/KFc=': 45269,
-    'p0FzkcjbQOUX0bFxGTe1w3S4RrNLwwyDwyyc4+sJPbw=': 44109,
-    'rKDC5Vzp+WBf9sKAY+Ohei7jKHhBFMDSjog3YvasEOw=': 68332,
-    'FAKMNOkx6mEFC27NCqNqI/t8V95bxOtmv26FSEubBXU=': 18761,
-    '5BLjNOdwFSTd6nDYoUjmtCEthEZLRqKQFUIxKlxqCbE=': 58934,
-    'PgetRzGr99CchJloxiwby4q1UIW4VeiJKeIHS4hyVGA=': 7216,
-    'ulgiOQLjaLZgK9AVixUBHBmxQ9UQK3SgBPmu7ufTUZE=': 25841,
-    'cCaO2yR/bElUIq6wBQeN7YIjkfH55WCV/mQFYTz7kXc=': 122783,
-    'TBKylG1fuZ1wsNqZ9rcz9F6Q1Pr77kQaJi0fLqxS0lY=': 76844,
-    'alAboGLz0sw/P/5X9xOcMuHbAEKsDUSKD/wyMo10s+8=': 32258,
-    'ZVXb+BEAt0CCmuDWvkbCPi1bMzcTzMK1bJDVdBut/Zs=': 70693,
-    'kY0xAKEiUiyX5ff8Hds+EmnZP6Ey49w6jRcKdLsDjxY=': 49117,
-    '92xap7RQyeLwyq/iKQJ9WCsg926ZsccnOIE0u8CO2/I=': 48810,
-    'JahVUO8AiC9j5/VtMCBY+4/l9HqffHM60zglA+QRokQ=': 15403,
-    'jzLA2oQPkE5ivNRVpUkPSQOLTOOs/UJYp7wt8CFN0+4=': 132422,
-    'XOqOCEhDlkznVpYJamtiZyezYRfzCbEfp0XhibHdKKY=': 18047,
-    'mJ0l9PlDpRhJTkruisJr3kyP0UW0WqPVuNwbrupJc84=': 31700,
-    'cJ05yYxevc92Pc39MZTHBUC8j6Y9xYb+Owcm33mn8Is=': 8287,
-    'dLMKX9qouqRdplG22XiFcSM3cOCSgIGiglbUwxjBOOk=': 11783,
-    'sN3ZVVWLUzxbKj0XPRDwT4BaPfm6WJr+WQcLpLFzEq8=': 66429,
-    'gsWC4MvWQPmSH01WcfBve3d4IJa/7l6sVNT/56foUA4=': 8167,
-    '2g3VY0Rtnwip2r+9hm/VndZs1BnNc1GmI3kRP4GHYPc=': 91332,
-    'AOV2C+wVvI11NuBp3F/V3jvswmy8yAaE+x/RotXmr6o=': 34772,
-    'b7vfuVTV8seKuV2QSv/KRhLuyk9OJYphUYtwHK8JS4k=': 68377,
-    'UfsvVkfQlj3ZeUF8rOC24f0nY25JDrRLhlwBqGatGEk=': 145326,
-    'H6Aov/Aq5ofkaiUTWe8PmySUEPnvRBzVB4e2siCfJqs=': 137980,
-    'Ie82nl1LrvTb2RCKn+vL2vmLxVJr1rqrtDND59vIoF8=': 269323,
-    'c8zxXuSGJgbQ7lGb2G8jvfZjuYuG1h3BWZjOuyRGp/0=': 26736,
-    'd8V7p1f5PfQwhfdQ9YQJ3AN0kCOJJdAaU6hbhd+reQw=': 25831,
-    'z/fK11mzA+AgRIbt+2yQubQUop8jKiFoDnR9XrWMlMU=': 100743,
-    'nZaywV0I3vE9Mto8YYLTPKQ5wwF9tup7SpGkRXND7Dc=': 44664,
-    'b5h3BdRkTNBkFy4hrZQBCceg8lg/kdOfx42hQKN+jkk=': 78758,
-    'UEH4C47Dgh9Fv36oVb2nbd+ccacXzkAEVERlCI4ROUw=': 144794,
-    'bGhCNWvMK/ya0J6YiBsS/qTKudVlvYeqs802Twh3K18=': 64834,
-    '72rJtrcRRMRrjxetKXxXoSgtmCNaXKYpoaR6pDt5hjw=': 38565,
-    'iL02ly2ZK7ifSIlIJfjA0ARUwG7v4ukKvQi3etsxJRg=': 53094,
-    'oS23jzZh6czQwIFhGy+futnyTVEl3L9re/YC86gyCN8=': 13689,
-    'TI5YZpMskbBIdoMOb75PMdVzSC859U4uXAvgRm702V4=': 42468,
-    'x4ckKzOO1ICqXgLs/iibt+g6u1IPZjjQ4l3RiW6DDLE=': 76309,
-    'c5N1JZW5+JQ80IjzA/a5dJFB0eEnvwSj9U2FWAoh48M=': 23234,
-    'ZdOwFEc2eii4h1e1Wp2JUGnZR+yu1N5Mnur5mGqbmAE=': 3508,
-    'N3jbe1hZpul+4ZWPB+i/t1IlJ7ThJCZtH/H1SOJUGHU=': 99697,
-    'jkRv5tbVrST4Exdk52efjXDYFBpOkrIEkBWZPVO5NhA=': 289363,
-    'IkAzZJH+5/8vLWGI0yaY2MIR5dsaIiaTh3O+BH/+PMQ=': 8324,
-    'QXH0ytgzzsjc27fHcjVdPfhvrfqnUdPwTwFprevStts=': 15651,
-    '9EhShvQJqCVYsNN6VMu2Q3atyW4MyrpcUDTpJvgnnHo=': 111406,
-    'rsOUL3vdPsE+sA5ERc78NQle374lTCOQ46buoSjp+QI=': 46857,
-    'JEFcmqxT55eDi/B3zHRf4g8m70HOddy/vsipp8t876M=': 75057,
-    'wIQhZqFKS/O6uojeUPQ2IC4IRFERnped7uU2QwFhxOw=': 38000,
-    '7lYGpfXTP+tIFvlrvl+oOpyTrN+vOMGyL+5JonufST8=': 22473,
-    'ELweYUBbgBy5TybAtrdLnS6JI5WtLS5+uldrik/ZunA=': 62303,
-    'Oaxoa23toLAbBEEJptj3a8E+TndXzMaULoZbL9xDNlQ=': 7173,
-    'Hwyr8Ykggr7KYL6d3mB+jty52+k7h22RjaDrBKruHfA=': 6207,
-    'S82dBIeJkKthd3fc61fVEeeY5bjqnJ/Hpj2a3ppCeyo=': 221913,
-    '0pbCBUnCoPfnAhNVSKcgbTzBDnVIUf+zuDcHC5QZo1s=': 10579,
-    'YcwzSAylxPqPMhTRGqH+cuNu8N4F/x7DjxLgmKHF0FU=': 60220,
-    'BQndt+T0N/bW/JUO1J7dBhmWXg9zGu9ahGkeuubR908=': 47306,
-    '2ilbBGfJxs8+xO2aNgCmh+YhfT5nfy7dydoNs0ovLfw=': 184673,
-    'Equf3XrHKZKKZYjE9mXXkhMAJQF4FBt0Ue6OWEuag8U=': 62133
+    'oJFAH4+DmE/ZZWaVAgASCtPSBxKVnq+T46o0PThtRaQ=': 182374,
+    'scPgbZE9pZb4jHbnofXSmQxA2W0GJ8paZxKYQtnkS9A=': 53213,
+    'Zb/r/KmkpvcTC8IiT5PYPNxuGRlLyiJ7rFnnhrPyEf0=': 13601,
+    'aZtm4zG+BxLWHBKWx50u9QUURhScO9kntfzFbH0FrKo=': 105279,
+    'nEe8HJGHY1SzdIJ866iRO4nvg3+5UU+LVHSmC+DeoHQ=': 214235,
+    'lStAt/MMYJQ9OZktjgPiBDjqareo8Lf/C3l/Fa9tiOI=': 31119,
+    '9RRD2k706N7M/Kosz6uINCVPBNxDne/iyfCxmIMk/dA=': 86453,
+    'QUKfiOAZZMXqvltcFRh0toQpv4RuwjWUEXdrBqXCngs=': 16783,
+    'RXhNtuBwFCJXx4Fb8CFHAnWwYw6Qkj+D36+YnkzdmLg=': 39069,
+    'CbezZRbEc9ErvtFnyPBdtSdN2qaSRDPKa1wtIjCV+5s=': 55208,
+    'CwTMmSNGV6xLBxcID125LjXgDnO4omXiFsTqIkhDVqA=': 60527,
+    'f1LJyoSBkzfdSLIMttGXFAiZfU4ECqBRDUYFcdoS1Bs=': 75627,
+    '5t/G9NG6gXSTBwYEdy5mzm9qwGNZ6eofHZ+IeegNxTk=': 124147,
+    'KOFwqxsUhcqpc3iwu3ZL5XH5CNmBKnUx09h8ThycJMQ=': 58763,
+    'ke0xGHFdrXyy4aWcIXbRFYEJA2VOXRqmifdkbY4un2A=': 42849,
+    'bwh5Jg5bPP49/eXIW5S9ABwmBK46gIadzdjJqsb4KNA=': 15074,
+    'ey/NS/s7T8/DO6VPC+ndix0Eq5/+uqgsljXpX8XckPg=': 90048,
+    'jynLED/PZW7IwF9+uwxMPdlHMvVhxb90mKNEyF8OMsQ=': 7973,
+    'Yalg17HayzyvhOgwcJXXOrwvFzxGKRtoQyJvYbQ1yOY=': 56614,
+    'pNeKbkuRsynVN4qCOy4vND4D3YpBohoS+z9VpGZZStg=': 178959,
+    'shWOy4rXisb6Lg36pM70WJxMaDe/9QycZFxDUiTUECI=': 140133,
+    'dhFk+bYXMhDfrjhoJ05BSgQchoLDGaX0TsKET/ykUlg=': 63673,
+    'Kr06v+J1AygLoLmC4DNxejBOYVcaFKpV9Hc/s7dspVA=': 95765,
+    'R3zXECY+H/da5hR0XOBg09H7+VzUXncM9afmJ+JLikc=': 60862,
+    '7Fv2UasgLbYcJRNAhEoOh1tnJOKEMHJ5jaO4wx1GtBw=': 2672,
+    'R4JM2zmj5dWEr5SSyplTDkEzi17EMDiPCS3cYrpFwqc=': 23108,
+    'a4IfTyFTh6amn7YIhImJdITuw3i0RpUFe+Zg3wGmcRs=': 8205,
+    's1woVEsuc6HD7UZR8TNO/H2rwKj61WQ7JwPRak1uw28=': 70215,
+    'p5vFs8+9XBjJaxEKqwhfWSAvANITspox+p7EOGBTSeo=': 73435,
+    'YQTkzC3SlAtaK7efUfkYRM5fTOl3IdluWTHA+TOnmdc=': 43578,
+    'TDloK6tkfzmHQ5CTXX2TFDF4toRpbkPXM5Oa22x37aM=': 32226,
+    'fX+fQjq9fszVJJnbZ/pgatGp8axwBFpmPwXqciqZniA=': 1579,
+    'J8GE1vZtR9dFj6U4YnPmCdg8yfq8JFyNXTFYb+Axonw=': 70725,
+    'OnYi2TloDWLKDHhWOdJCOMEvE2+oyOQd+lGkPt9OsWU=': 162703,
+    'SM0kff05GKl/URyczeOrf3wdi5oEiU6CGrNK5pCrvAI=': 30312,
+    'robzjALxCUqGWJHWQQ+pJWoEjPhq+qBuwsM7USD2vC4=': 223861,
+    'oMkuvXhqcHw2kfZDjy/FpukW290nYCkAEP73XHCff90=': 3072,
+    'uLyBhbzrq4h+6O3KjmBErqRnUWeO/wINphcxX08BwWs=': 9342,
+    'cvoFWEiytcXgAQwLChOnjnnufM3R6OrOBSrXGEZmUNY=': 78347,
+    '55UUwuJrTusvFUiKDWfRQ8HhloWez0giaDrVsc0Y8EY=': 29275,
+    'bRfxYw/SNpsh0SoNBjvxMJkqQO3evVRFcvdkkVbuabc=': 30882,
+    'Qu3Ni6v+IhKDOnPxa6pj22tnaQb8ImisEvDf96pTpVg=': 172715,
+    'x8x8e/Zr6/gH0R1Bl89IDFUh7qgDZOGjH3k4WsB538A=': 72907,
+    'sJy688yjGqpDzkpCKc77N28h7IAolVGXWuB3CybkKi4=': 84357,
+    '+yhp11Ou0swSgWIBGAQXgVqkk7mEF3hJ3bwaLoyCRJA=': 37976,
+    '5GCN+BK9+SucqjHyvLXYXEPd2rkOETscZMN1dt+/biE=': 15004,
+    'iqwjZ+3zfbx9DI91OOm2Myl5YcaedqTEZkz3aB/dUq4=': 213408,
+    'BzJHP7BGCWRjHyJx8zoMkz/FcHm7hrh+VitxP7Cbh30=': 204509,
+    'c1LfYD0NstO3QESIqT4s1ZKrNO4KWgdZg2lJkNjF/zI=': 61473,
+    'QBOhpdcVJF/KJrYaTeng6L2eUxR1fEgYs9V9mTVYbCg=': 5236,
+    'uVmA+JSFo+N6g0DLTMY7UfNnVAzqz1LbbI2aSjGIhyU=': 10010,
+    'ZfXeloZUknn7amh4YrJ67mr6m+S/b31SlH59Q8uf4J4=': 28871,
+    'qcxbKExoyhP8vkDE7+Go9TWI27ITHBQAzLGr4eH6W+U=': 81828,
+    'goAplQupmu4UkZF6Gcx/2ZQwOFniOUCmwlIFRFAqmbU=': 50346,
+    'hxm9Wkyom8LJ24KrxG5eb8D0Fel2DgYSb6Y+wrCW558=': 139183,
+    'nncm+AId14nnWHG23NUT2CsESEi/xsCbdpc/AGW5pTk=': 29667,
+    '7/vCWDQBuiSBnS8gkzqvBWAUsyVTT/JEbll3TTDYhWg=': 43891,
+    'zpQKb6CBQyBsmbRj7N/NgPZnSb7p22SOajr24JqPDbw=': 874,
+    'QjtmTIjgsoToXUhBPiVHOW0S4gaX+mprrVFj7Wyi+Cc=': 61914,
+    'xmOy0nPLNvpueOo8md/uZHINPVjUrHfKvD5UZOzo6N0=': 45481,
+    'qs/10/c8/aoL9Kirb6eRsJPrVbj50vzpHW07rmSGBMM=': 75417,
+    'WAGP8UdObvSKJ9qJlH8XS9FqXnkysG60+dlgCszz0HE=': 115038,
+    'J1jgvDJvrAKiGpsWjDRkLKb+PgzkAotwXQZmMXLH5z0=': 30510,
+    '8w3xJ91RBIoC3Qrrr8uzEUtjATLkOckYSX7yRs3QAhY=': 28429,
+    '6LQfdKRw9dHcSz2BBj/RsJVlXlFbWte1kHVU/j/T1WM=': 107824,
+    'NLQ+Minyzj/WyeBkG07yqIKOS4ONuRUhs4ytNoaVfIQ=': 138747,
+    'bevsx7nlaaCngGoyKY5bAbbhqRK0L1Xlh7+3e9wi200=': 899,
+    'QbLjAhABcmRwZwCXVo3pnNQ6FJii/MC/kTEPhRCB5oo=': 33965,
+    '8ydY5tD/REYr93q2wQPAJ4ITuldtGpcnrLEBJPjEeos=': 2000,
+    'wgbvx0SeWS8W0hCODwVbBNRkSdtFmgFbjFNhGYazRQw=': 6323,
+    '0Nf90f+1/uHVHEjIk4o5Uj+KOXgcXZPdq1CdQou3cms=': 25419,
+    'kkBW2WGjjEHdqX7cxlkfLGRRdgLPi05WTlQwclAIJUI=': 84401,
+    'd1lctszg9yQwAuEUzttpOWVo1nohQN9KnPfLG+5dyBc=': 71107,
+    'ZH143UL1Ai51xFqjtWP2KTOm/aQudIiX8nE7xuwjDtM=': 198,
+    'W4/gVgxd8SShx6I3iVv+0smwzfC1qHaNiHc9TWeEO1U=': 34019,
+    '24Gl/7ObZEMY/DFi/2nr2F7SsitZGF5N5P3/6Sd9zXg=': 33977,
+    'HThYaVOU1Bti0DEWnBgkshFUfiUr+ZxhG3cop60dYfA=': 133419,
+    'mfcPCdMm8csHRQrT1COSTIFWVZxV2yRRcFc76T3aVLc=': 15967,
+    'cUnA6qbtO25omPZ0rAjau5d4C8RlU9hyhy4emuM2q58=': 52162,
+    'TEVT5uB6tOWzpUMO65+1bxqwv4D8eGfMO0krfEoW5lE=': 44084,
+    's5zfg+QnFPhN441wb81EJCh483vEqBaGcOpbqC/npeg=': 6492,
+    'GhM5NJGsMBFs8dGKH6TxOZDXgxawe2ii3+Lx3pQHBhg=': 114183,
+    'oExN/JmWcIBKMytcwTA7fnm1Bw6zWwwy4xC1gw0Ng9c=': 44014,
+    'iNE6dsBoV8ai7l/wFH+NB0mm3wxXelZxPiA3soIzeOM=': 47363,
+    'x22iZpOB8B6/ykkATuIftyM8gCWlRkpK/Vkh4W4Z4sY=': 1895
 };
 Class.register(TestBlockchain);
